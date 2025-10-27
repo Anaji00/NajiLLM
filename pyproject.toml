@@ -1,0 +1,14 @@
+[NajiLLM]
+name = "NajiLLM
+version = "0.0.1"
+description = "Personal LLM"
+authors = [{name = "Alessio Naji-Sepasgozar"}]
+requires-python =">=3.13"
+dependencies = [
+    "torch",
+    "numpy",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

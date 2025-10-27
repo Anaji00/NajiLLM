@@ -1,0 +1,227 @@
+# Transformer Core
+# Token + position embeddings
+
+# Causal self-attention
+
+# Feedforward network
+
+# Repeated blocks
+
+# Final LM head to predict the next token
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+
+from .model_config import ModelConfig
+
+class CasualSelfAttention(nn.Module):
+    """
+    A standard GPT-style causal self-attention head group.
+
+    - We project the hidden states (d_model) into queries, keys, and values.
+    - We split those into multiple heads.
+    - Each token can only attend to tokens at positions <= itself (causal mask).
+    """
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.config = config
+
+        assert config.d_model % config.n_heads == 0, "d_model must be divisible by n_heads"
+        self.head_dim = config.d_model // config.n_heads
+        self.n_heads = config.n_heads
+
+        # one linear layer to produce Q, K, V all at once (faster than 3 separate layers)
+        self.qkv = nn.Linear(config.d_model, 3 * config.d_model, bias = False)
+        # Q signifies "queries", K means "keys", V means "values"
+        # qkv work by projecting the input hidden states into three different spaces
+        # then we can compute attention scores using Q and K, and use those scores to weight V
+        # finally we project the concatenated outputs of all heads back to d_model
+        self.out_proj = nn.Linear(config.d_model, config.d_model, bias=False)
+
+    def forward(self, x: torch.Tensor):
+        """
+        x: (batch, seq_len, d_model)
+        return: (batch, seq_len, d_model)
+        """
+
+        # Forward pass is important for understanding how attention works
+        # attention works by computing a weighted sum of values (V) based on the similarity between queries (Q) and keys (K)
+        B, T, C = x.shape # batch size, sequence length, embedding dim (d_model)
+
+        # Project once, then split into Q, K, V
+        qkv = self.qkv(x) # (B, T, 3 * C)
+        q, k, v = torch.split(qkv, C, dim = 2) # each is (B, T, C)
+
+        # Reshape into multiple heads
+        # Why? To allow the model to jointly attend to information from different representation subspaces at different positions
+        # Ex: one head might focus on syntactic structure, while another focuses on semantic meaning
+
+        q = q.view(B, T, self.n_heads, self.head_dim).transpose(1,2) # we transpose to get (B, n_heads, T, head_dim)
+        k = k.view(B, T, self.n_heads, self.head_dim).transpose(1,2) # (B, n_heads, T, head_dim)
+        v = v.view(B, T, self.n_heads, self.head_dim).transpose(1,2) # (B, n_heads, T, head_dim)
+        # shapes are now (B, n_heads, T, head_dim)
+        # before transpose, we had (B, T, n_heads, head_dim)
+
+        # Scaled dot-product attention
+        # att = softmax(QK^T / sqrt(d_k), mask)
+        att_scores = torch.matmul(q, k.transpose(-2, -1)) # (B, n_heads, T, T)
+        att_scores = att_scores / math.sqrt(self.head_dim) # scale by sqrt(d_k) to prevent large dot products
+
+        # Causal mask to ensure that each token can only attend to previous tokens (including itself)
+        # we create a mask that is lower triangular with -inf above the diagonal
+        mask = torch.triu(
+            torch.ones(T, T, device=x.device, dtype=torch.bool),
+            diagonal=1 # upper triangular part
+        )
+        att_scores = att_scores.masked_fill(mask, float('-inf'))
+        att_weights = F.softmax(att_scores, dim=-1) # (B, n_heads, T, T)
+
+        att_output = torch.matmul(att_weights, v) # (B, n_heads, T, head_dim)
+
+        # Reshape back to (B, T, C)
+        att_output = att_output.transpose(1, 2).contiguous().view(B, T, C)
+
+        # Final linear projection
+        out = self.out_proj(att_output) # (B, T, C)
+        return out
+    
+class FeedForward(nn.Module):
+    """
+    Simple 2-layer MLP used inside each Transformer block.
+    Typically: Linear(d_model -> d_ff) -> GELU -> Linear(d_ff -> d_model)
+    """
+
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.fc1 = nn.Linear(config: d_model, config.d_ff)
+        self.fc2 = nn.Linear(config.d_ff, config.d_model)
+        self.activation = nn.GELU()
+
+    def forward(self, x: torch.Tensor):
+        return self.fc2(self.activation(self.fc1(x))) # this is a feedforward pass that applies two linear transformations with a GELU activation in between
+    
+class TransformerBlock(nn.Module):
+    """
+    One Decoder block:
+    x -> LayerNorm -> SelfAttention -> residual
+      -> LayerNorm -> FeedForward -> residual
+    """
+    def __init__(self, config: ModelConfig): # This configures a single Transformer block
+        super().__init__()
+        self.ln1 = nn.LayerNorm(config.d_model) # one layer norm before attention
+        self.ln2 = nn.LayerNorm(config.d_model) # another layer norm before feedforward
+        self.attn = CasualSelfAttention(config) # causal self-attention layer
+        self.ffn = FeedForward(config)          # feedforward layer
+        self.dropout = nn.Dropout(config.dropout) # dropout for regularization
+
+    def forward(self, x: torch.Tensor): # A tensor is a multi-dimensional array
+        # Attention sub layer
+        attn_out = self.attn(self.ln1(x)) # apply layer norm then attention
+        x = x + self.dropout(attn_out)    # residual connection with dropout
+
+        # Feedforward sub layer
+        ff_out = self.ff(self.ln2(x)) # apply layer norm to 2nd sublayer then feedforward
+        x = x + self.dropout(ff_out)   # residual connection with dropout
+        return x
+    
+class Transformer(nn.Module):
+    """
+    Full decoder-only transformer LM:
+    - token embedding
+    - positional embedding
+    - N transformer blocks
+    - final layer norm
+    - LM head to predict next-token logits
+    """
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.config = config
+
+        # Token and positional embeddings
+        self.token_embed = nn.Embedding(config.vocab_size, config.d_model) # token embedding layer
+        self.pos_embed = nn.Embedding(config.max_seq_len, config.d_model)  # positional embedding layer
+
+        # Stack of Transformer blocks
+        self.blocks = nn.ModuleList([
+            TransformerBlock(config) for _ in range(config.n_layers)
+        ])
+
+        # final layer norm before logits
+        self.ln_f = nn.LayerNorm(config.d_model)
+
+        # Language modeling head: project hidden state -> vocab logits
+
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+    def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
+        """
+        idx: (batch, seq_len) integer token IDs
+        targets: (batch, seq_len) integer token IDs we want to predict
+                 If provided, we compute cross-entropy loss.
+
+        returns:
+            logits: (batch, seq_len, vocab_size)
+            loss:   scalar or None
+        """
+        B, T = idx.shape # batch size, sequence length
+        if T > self.config.max_seq_len:
+            raise ValueError(f"Sequence length {T} exceeds model max_seq_len {self.config.max_seq_len}")
+        
+        # Token and positional embeddings
+        token_embeddings = self.token_embed(idx)          # (B, T, d_model)
+        position_indices = torch.arange(T, device=idx.device) # (T,)
+        pos_embeddings = self.pos_embed(position_indices)[None, :, :] # (1, T, d_model) broadcasted over batch
+        x = token_embeddings + pos_embeddings            # (B, T, d_model)
+
+        # Pass through each block
+        for block in self.blocks:
+            x = block(x)
+        
+        x = self.ln_f(x) # final layer norm
+
+        logits = self.lm_head(x) # (B, T, vocab_size)
+        loss = None
+        if targets is not None:
+            # next-token loss:
+            # we shift predictions vs targets outside this function at training time,
+            # BUT a simpler approach is: predict token[t] from token[0..t-1]
+            # so we'll just compute CE on logits[:, :-1] vs targets[:, 1:]
+            logits_shifted = logits[:, :-1, :].contiguous()
+            targets_shifted = targets[:, 1:].contiguous()
+            loss = F.cross_entropy(
+                logits_shifted.view(-1, logits_shifted.size(-1)),
+                targets_shifted.view(-1)
+            )
+        return logits, loss
+    
+    @torch.no_grad()
+    def generate(self, idx: torch.Tensor, max_new_tokens: int):
+        """
+        Generate new tokens autoregressively given a context.
+
+        idx: (B, T) initial context token IDs
+        max_new_tokens: number of tokens to generate
+
+        returns:
+            (B, T + max_new_tokens) generated token IDs
+        """
+        for _ in range(max_new_tokens):
+            # if sequence too long, crop from the left
+            if idx.size(1) > self.config.max_seq_len:
+                idx_cond = idx[:, -self.config.max_seq_len:]
+            else:
+                idx_cond = idx
+
+            logits, _ = self.forward(idx_cond)
+            next_token_logits = logits[:, -1, :]  # (1, vocab_size)
+
+            # greedy for now (later: top-k / temperature)
+            probs = F.softmax(next_token_logits, dim=-1)  # (1, vocab_size)
+            next_token = torch.argmax(probs, dim=-1, keepdim=True)  # (1,1)
+
+            # append
+            idx = torch.cat([idx, next_token], dim=1)
+
+        return idx
