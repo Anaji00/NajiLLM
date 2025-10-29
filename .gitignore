@@ -53,6 +53,8 @@ tensorboard/
 **/*.tfevents.*
 
 # Common weight/file formats
+*.pt
+*.pth
 *.bin
 *.safetensors
 *.onnx
