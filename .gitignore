@@ -1,0 +1,112 @@
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Python / build ---
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+
+# --- Virtual envs ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Tooling / IDE ---
+.vscode/
+.idea/
+*.iml
+.mypy_cache/
+.pytest_cache/
+.pytype/
+.pyre/
+.cache/
+*.log
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- Data (keep the folder, ignore contents by default) ---
+data/**
+!data/.gitkeep
+!data/README.md
+
+# --- Model artifacts / training outputs ---
+checkpoints/
+runs/
+logs/
+lightning_logs/
+wandb/
+mlruns/
+tensorboard/
+**/*.tfevents.*
+
+# Common weight/file formats
+*.bin
+*.safetensors
+*.onnx
+*.ckpt
+*.pb
+*.tflite
+*.h5
+*.pkl
+*.joblib
+
+# --- Tokenizers ---
+*.model
+*.vocab
+!tokenizer/spm.model
+!tokenizer/spm.vocab
+
+# --- Repo-local caches
+.huggingface/
+.hf_cache/
+huggingface_cache/
+.cache_dir/
+scratch/
+
+# --- Large datasets / archives ---
+*.jsonl
+*.jsonl.zst
+*.parquet
+*.tar
+*.tar.gz
+*.zip
+*.gz
+*.xz
+*.bz2
+*.zst
+*.7z
+*.csv
+
+# --- Secrets / env ---
+.env
+.env.*
+*.env
+*.secret
+secrets.*
+*.pem
+*.key
+*.crt
+
+# --- DBs / misc ---
+*.sqlite
+*.sqlite3
+*.db
+*.prof
+*.profraw
+*.orig
+*.bak
+*.tmp
+*~
